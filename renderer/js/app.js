@@ -158,6 +158,7 @@ function setupEventListeners() {
   // Pan
   viewport.addEventListener('mousedown', (e) => {
     if (e.target.closest('.node-container')) return;
+    if (isDragging) return; // Don't start panning while dragging
     isPanning = true;
     startX = e.clientX - pointX;
     startY = e.clientY - pointY;
@@ -386,42 +387,62 @@ function drawLines() {
 // Node Drag & Drop
 // ============================================
 
+let dragOffsetX = 0, dragOffsetY = 0;
+
 function startNodeDrag(e, node) {
   if (e.button !== 0) return; // Only left click
   e.stopPropagation();
+  e.preventDefault();
 
   isDragging = true;
   dragNode = node;
-  dragStartX = e.clientX;
-  dragStartY = e.clientY;
-  nodeStartX = node.x || 50;
-  nodeStartY = node.y || 50;
 
+  // Get the node element and its current position
   const el = document.getElementById(`node-${node.id}`);
+  const viewport = document.getElementById('viewport');
+  const viewportRect = viewport.getBoundingClientRect();
+
+  // Calculate mouse position relative to viewport, accounting for zoom/pan
+  const mouseWorldX = (e.clientX - viewportRect.left - pointX) / scale;
+  const mouseWorldY = (e.clientY - viewportRect.top - pointY) / scale;
+
+  // Store the offset between mouse and node center
+  const nodeX = (node.x || 50) / 100 * viewportRect.width;
+  const nodeY = (node.y || 50) / 100 * viewportRect.height;
+
+  dragOffsetX = mouseWorldX - nodeX;
+  dragOffsetY = mouseWorldY - nodeY;
+
   el.classList.add('dragging');
+
+  // Prevent text selection during drag and set body class for cursor
+  document.body.style.userSelect = 'none';
+  document.body.classList.add('dragging-node');
 }
 
 function handleNodeDrag(e) {
   if (!isDragging || !dragNode) return;
+  e.preventDefault();
 
-  const container = document.getElementById('tree-container');
-  const rect = container.getBoundingClientRect();
+  const viewport = document.getElementById('viewport');
+  const viewportRect = viewport.getBoundingClientRect();
 
-  // Calculate movement in percentage
-  const deltaX = ((e.clientX - dragStartX) / (rect.width * scale)) * 100;
-  const deltaY = ((e.clientY - dragStartY) / (rect.height * scale)) * 100;
+  // Calculate mouse position in world coordinates (accounting for zoom/pan)
+  const mouseWorldX = (e.clientX - viewportRect.left - pointX) / scale;
+  const mouseWorldY = (e.clientY - viewportRect.top - pointY) / scale;
 
-  let newX = nodeStartX + deltaX;
-  let newY = nodeStartY + deltaY;
+  // Calculate new node position (subtract the initial offset)
+  let newX = ((mouseWorldX - dragOffsetX) / viewportRect.width) * 100;
+  let newY = ((mouseWorldY - dragOffsetY) / viewportRect.height) * 100;
 
-  // Clamp values
-  newX = Math.max(0, Math.min(100, newX));
-  newY = Math.max(0, Math.min(100, newY));
+  // Clamp values to keep node within bounds
+  newX = Math.max(2, Math.min(98, newX));
+  newY = Math.max(2, Math.min(98, newY));
 
   // Apply snap-to-grid if enabled
   const snapped = snapToGrid(newX, newY);
 
-  // Update visual position
+  // Update visual position immediately
   const el = document.getElementById(`node-${dragNode.id}`);
   el.style.left = snapped.x + '%';
   el.style.top = snapped.y + '%';
@@ -431,7 +452,7 @@ function handleNodeDrag(e) {
   dragNode._tempY = snapped.y;
 
   // Update lines in real-time
-  requestAnimationFrame(drawLines);
+  drawLines();
 }
 
 function endNodeDrag() {
@@ -440,6 +461,10 @@ function endNodeDrag() {
   const el = document.getElementById(`node-${dragNode.id}`);
   el.classList.remove('dragging');
 
+  // Restore text selection and remove body class
+  document.body.style.userSelect = '';
+  document.body.classList.remove('dragging-node');
+
   // Save the position if it changed
   if (dragNode._tempX !== undefined) {
     dragNode.x = dragNode._tempX;
@@ -447,17 +472,26 @@ function endNodeDrag() {
     delete dragNode._tempX;
     delete dragNode._tempY;
 
-    // Update config
+    // Update config and networkData
     const configNode = config.nodes.find(n => n.id === dragNode.id);
     if (configNode) {
       configNode.x = dragNode.x;
       configNode.y = dragNode.y;
       saveConfig();
     }
+
+    // Also update networkData if monitoring is active
+    const dataNode = networkData.find(n => n.id === dragNode.id);
+    if (dataNode) {
+      dataNode.x = dragNode.x;
+      dataNode.y = dragNode.y;
+    }
   }
 
   isDragging = false;
   dragNode = null;
+  dragOffsetX = 0;
+  dragOffsetY = 0;
 }
 
 // ============================================
